@@ -2,6 +2,7 @@
 Poultry AI Agent API v3 — With JAPFA Standards
 Deploy to Railway/Render. Include poultry_model_v3.pkl in same folder.
 """
+from fastapi import UploadFile, File
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -161,7 +162,47 @@ def load():
 @app.get("/health")
 def health():
     return {"status":"healthy" if artifact else "no_model","model_loaded":artifact is not None}
-
+    
+@app.post("/predict-file")
+async def predict_file(file: UploadFile = File(...), x_api_key: str = Header(None)):
+    verify(x_api_key)
+    if not artifact:
+        raise HTTPException(503, "No model")
+    
+    import io
+    contents = await file.read()
+    df = pd.read_excel(io.BytesIO(contents))
+    df.columns = df.columns.str.strip()
+    
+    # Limit to 5000 rows to prevent timeout
+    if len(df) > 5000:
+        df = df.tail(5000)
+    
+    # Convert to records format
+    records = []
+    for _, r in df.iterrows():
+        records.append(Record(
+            Farm=str(r.get('Farm', '')),
+            Shed=str(r.get('Shed', '')),
+            Date=str(r.get('Date', '')),
+            Hour=int(r.get('Hour', 0)),
+            Temp=float(r.get('Temp', 0)),
+            Humidity=float(r.get('Humidity', 0)),
+            nh3=float(r.get('nh3', 0)) if r.get('nh3') != '-' else 0,
+            ph=float(r.get('ph', 0)) if r.get('ph') not in ['-', None, ''] else None,
+            co2=float(r.get('co2', 0)) if r.get('co2') not in ['-', None, ''] else None,
+            tds=float(r.get('tds', 0)) if r.get('tds') not in ['-', None, ''] else None,
+            DOC=float(r.get('DOC', 0)),
+            Weight=float(r.get('Weight', 0)),
+            Water_Consumption=float(r.get('Water Consumption', 0)),
+            Mortality=float(r.get('Mortality', 0)),
+            flock_id=str(r.get('flock.id', '')),
+            flock_age_days=1,
+        ))
+    
+    # Use existing predict logic
+    data = PredictRequest(records=records)
+    return predict(data, x_api_key)
 @app.post("/predict")
 def predict(data: PredictRequest, x_api_key: str = Header(None)):
     verify(x_api_key)
